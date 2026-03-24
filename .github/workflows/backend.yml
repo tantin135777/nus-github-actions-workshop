@@ -1,0 +1,28 @@
+# Runs the backend (Python) tests on every push to main or starter
+# and on every pull request targeting main or starter.
+
+name: Backend Tests
+
+on:
+  push:
+    branches: [main, starter]
+  pull_request:
+    branches: [main, starter]
+
+jobs:
+  test-backend:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run backend tests
+        run: pytest -v
