@@ -1,0 +1,77 @@
+# Triggered when "Backend Tests" completes on main or starter.
+# Also verifies that the frontend tests passed on the same commit.
+# We only listen for backend tests since they are typically slower,
+# so by the time this triggers, frontend tests have usually finished too.
+
+name: Docker Build & Push
+
+on:
+  workflow_run:
+    workflows: ["Backend Tests"]
+    types: [completed]
+    branches: [main, starter]
+
+jobs:
+  check:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+
+    permissions:
+      actions: read
+
+    outputs:
+      ready: ${{ steps.verify.outputs.ready }}
+
+    steps:
+      - name: Verify both test suites passed on this commit
+        id: verify
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          SHA="${{ github.event.workflow_run.head_sha }}"
+          BRANCH="${{ github.event.workflow_run.head_branch }}"
+          for WORKFLOW in "Frontend Tests" "Backend Tests"; do
+            COUNT=$(gh run list \
+              --repo "${{ github.repository }}" \
+              --workflow "$WORKFLOW" \
+              --branch "$BRANCH" \
+              --json headSha,conclusion \
+              --jq "[.[] | select(.headSha == \"$SHA\" and .conclusion == \"success\")] | length")
+            if [ "$COUNT" -eq 0 ]; then
+              echo "$WORKFLOW has not passed on $SHA yet, skipping"
+              echo "ready=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          done
+          echo "Both test suites passed on $SHA"
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: check
+    if: needs.check.outputs.ready == 'true'
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Lowercase image name
+        id: meta
+        run: echo "tag=ghcr.io/${GITHUB_REPOSITORY,,}:${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tag }}
